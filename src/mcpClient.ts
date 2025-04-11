@@ -1,73 +1,121 @@
 // src/mcpClient.ts
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { ollamaSamplingHandler } from "./ollamaSamplingHandler";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
-import type { CreateMessageRequest } from "@modelcontextprotocol/sdk/types.js";
+import type {
+  Tool,
+  CreateMessageRequest,
+} from "@modelcontextprotocol/sdk/types.js";
+import { LLMClient, type MessageParam, type LLMResponse } from "./myLLM";
 
-/**
- * Creates and connects an MCP client using our custom HTTP SSE transport.
- */
-export async function createMcpClient(): Promise<Client> {
-  // Replace with your MCP server HTTP endpoint.
-  const MCP_SERVER_ENDPOINT = "http://localhost:3001/mcp";
+const MCP_SERVER_ENDPOINT = "http://localhost:3001/mcp";
 
-  // Create the transport instance.
-  const transport = new SSEClientTransport(new URL(MCP_SERVER_ENDPOINT));
+export class MCPClient {
+  private mcp: Client;
+  private transport: SSEClientTransport;
+  private llm: LLMClient;
+  private tools: Tool[];
 
-  console.log("Connecting to MCP server at:", MCP_SERVER_ENDPOINT);
-
-  // Set up message handling on the transport.
-  transport.onmessage = (event) => {
-    // The event may be a string or an already-parsed object.
-    const message = typeof event === "string" ? JSON.parse(event) : event;
-
-    console.log("Received message from server:", message);
-
-    // Check if this is a sampling/createMessage request.
-    if (message.method === "sampling/createMessage" && message.params) {
-      console.log("Received createMessage request:", message.params);
-      // Process the request with the custom sampling handler.
-      ollamaSamplingHandler(message.params as CreateMessageRequest)
-        .then((result) => {
-          // Send the result back to the server.
-          transport.send({
-            jsonrpc: "2.0",
-            id: message.id,
-            method: "sampling/createMessage",
-            result,
-          });
-        })
-        .catch((error) => {
-          // Send error details back if something goes wrong.
-          transport.send({
-            jsonrpc: "2.0",
-            id: message.id,
-            method: "sampling/createMessage",
-            error: {
-              code: -32000,
-              message: error.message || "Internal error",
-            },
-          });
-        });
-    }
-  };
-
-  // Create a new MCP client instance with the desired capabilities.
-  const client = new Client({
-    name: "vue-mcp-client",
-    version: "1.0.0",
-    capabilities: {
-      messageService: {
-        createMessage: true, // Enable the createMessage capability.
+  constructor() {
+    // Advertise the sampling capability so that the server knows that the client supports LLM sampling.
+    this.mcp = new Client({
+      name: "vue-mcp-client",
+      version: "1.0.0",
+      capabilities: {
+        sampling: {},
       },
-    },
-  });
+    });
+    this.transport = new SSEClientTransport(new URL(MCP_SERVER_ENDPOINT));
+    this.llm = new LLMClient();
+    this.tools = [];
+  }
 
-  console.log("MCP client created with capabilities:", client);
+  // Connect to the MCP server and fetch available tools.
+  public async connectToServer(): Promise<void> {
+    // Note: client.connect() automatically calls transport.start() internally.
+    await this.mcp.connect(this.transport);
+    const toolsResult = await this.mcp.listTools();
+    this.tools = toolsResult.tools.map((tool) => ({
+      name: tool.name,
+      description: tool.description,
+      inputSchema: tool.inputSchema,
+    }));
+    console.log(
+      "Connected. Tools available:",
+      this.tools.map((t) => t.name)
+    );
+  }
 
-  // Connect the MCP client using the custom HTTP SSE transport.
-  // Note: client.connect() automatically calls transport.start() internally.
-  await client.connect(transport);
+  public async close(): Promise<void> {
+    await this.mcp.close();
+  }
 
-  return client;
+  getTools(): Tool[] {
+    return this.tools;
+  }
+
+  getClient(): Client {
+    return this.mcp;
+  }
+
+  // Process the user query by sending a sampling/createMessage request to the LLM.
+  public async processQuery(query: string): Promise<string> {
+    // Build the initial conversation with the user's query.
+    let messages: MessageParam[] = [
+      { role: "user", content: { type: "text", text: query } },
+    ];
+
+    // Call the LLM.
+    const llmResponse: LLMResponse = await this.llm.sendMessage(messages, {
+      maxTokens: 100,
+    });
+    console.log("LLM raw response:", llmResponse);
+
+    // For demonstration: if the response starts with a tool call marker,
+    // e.g., "CALL_TOOL:echo:{...}", then execute the tool via MCP.
+    const toolCallPrefix = "CALL_TOOL:";
+    let finalResponse = llmResponse.content;
+    if (finalResponse.startsWith(toolCallPrefix)) {
+      const splitIndex = finalResponse.indexOf(":", toolCallPrefix.length);
+      if (splitIndex !== -1) {
+        const toolName = finalResponse.substring(
+          toolCallPrefix.length,
+          splitIndex
+        );
+        const toolArgsStr = finalResponse.substring(splitIndex + 1);
+        let toolArgs = {};
+        try {
+          toolArgs = JSON.parse(toolArgsStr);
+        } catch (e) {
+          console.error("Error parsing tool arguments:", e);
+        }
+        console.log(
+          `LLM requested tool call: ${toolName} with args:`,
+          toolArgs
+        );
+        // Call the tool via MCP.
+        const toolResult = await this.mcp.callTool({
+          name: toolName,
+          arguments: toolArgs,
+        });
+        // Append the tool result to the conversation.
+        messages.push({
+          role: "assistant",
+          content: { type: "text", text: llmResponse.content },
+        });
+        messages.push({
+          role: "user",
+          content: {
+            type: "text",
+            text: (toolResult.content as { text: string }[])[0].text,
+          },
+        });
+        const followUpResponse = await this.llm.sendMessage(messages, {
+          maxTokens: 100,
+        });
+        finalResponse = followUpResponse.content;
+      }
+    }
+
+    return finalResponse;
+  }
 }

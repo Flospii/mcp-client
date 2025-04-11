@@ -5,96 +5,80 @@
     <section>
       <h2>Available Tools</h2>
       <ul>
-        <li v-for="tool in tools" :key="tool">{{ tool }}</li>
+        <li v-for="tool in tools" :key="tool.name">{{ tool.name }}</li>
       </ul>
     </section>
     <section>
       <form @submit.prevent="submitQuery">
-        <label for="queryInput">Enter message (for echo tool):</label>
+        <label for="queryInput">Enter message:</label>
         <input id="queryInput" v-model="inputText" type="text" placeholder="Type your message here" />
         <button type="submit">Send</button>
       </form>
     </section>
-    <section v-if="responseText">
-      <h2>Response</h2>
-      <pre>{{ responseText }}</pre>
-    </section>
+    <div class="response-container">
+      <div v-if="responseText" :class="{ loading: isLoading }">
+        {{ responseText }}
+      </div>
+    </div>
   </div>
 </template>
 
 <script lang="ts">
-import { defineComponent, ref, onMounted, onBeforeUnmount } from "vue";
-import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { createMcpClient } from "./mcpClient";
+import { MCPClient } from "./mcpClient";
 
-export default defineComponent({
+export default {
   name: "App",
-  setup() {
-    const client = ref<Client | null>(null);
-    const tools = ref<string[]>([]);
-    const inputText = ref("");
-    const responseText = ref("");
-
-    // Initialize the MCP client on mount.
-    onMounted(async () => {
+  data() {
+    return {
+      mcpClient: null as MCPClient | null,
+      tools: [] as Array<{ name: string; description?: string; inputSchema?: unknown }>,
+      inputText: "",
+      responseText: "",
+      isLoading: false,
+    };
+  },
+  methods: {
+    async initializeClient() {
       try {
         console.log("Initializing MCP client...");
-        client.value = await createMcpClient();
-        // List available tools.
-        console.log("Client initialized:", client.value);
-        const toolsResult = await client.value.listTools();
-        console.log("Available tools:", toolsResult.tools);
-        tools.value = toolsResult.tools.map((tool: any) => tool.name);
+        const client = new MCPClient();
+        await client.connectToServer();
+        this.mcpClient = client;
+        this.tools = client.getTools();
+        console.log("MCP client initialized with tools:", this.tools.map((tool) => tool.name));
       } catch (error) {
         console.error("Error initializing MCP client:", error);
       }
-    });
-
-    // Clean up the client on unmount.
-    onBeforeUnmount(async () => {
-      if (client.value) {
-        await client.value.closeGracefully();
-      }
-    });
-
-    // Handle form submission.
-    const submitQuery = async () => {
-      console.log("Submitting query:", inputText.value);
-
-      if (!client.value || inputText.value.trim() === "") {
+    },
+    async submitQuery() {
+      console.log("Submitting query:", this.inputText);
+      if (!this.mcpClient || this.inputText.trim() === "") {
         return;
       }
-
+      this.isLoading = true;
       try {
-        // For demonstration, we assume the MCP server has an "echo" tool.
-        // Adjust the tool name and parameters as needed.
-        const result = await client.value.callTool({
-          name: "echo",
-          arguments: { message: inputText.value }
-        });
-
-        // Process the returned result: We assume that the response contains a "content" array
-        // with one or more parts having type "text".
-        const textResult = result.content
-          .filter((item: any) => item.type === "text")
-          .map((item: any) => item.text)
-          .join("\n");
-
-        responseText.value = textResult;
+        const result = await this.mcpClient.processQuery(this.inputText);
+        this.responseText = result;
       } catch (error) {
-        console.error("Error calling tool:", error);
-        responseText.value = "Error calling tool.";
+        console.error("Error processing query:", error);
+        this.responseText = "Error processing query.";
+      } finally {
+        this.isLoading = false;
       }
-    };
-
-    return {
-      tools,
-      inputText,
-      responseText,
-      submitQuery
-    };
-  }
-});
+    },
+    async cleanupClient() {
+      if (this.mcpClient) {
+        await this.mcpClient.close();
+      }
+    },
+  },
+  mounted() {
+    this.initializeClient();
+  },
+  beforeUnmount() {
+    this.cleanupClient();
+  },
+};
 </script>
 
 <style scoped>
@@ -120,10 +104,11 @@ button {
   padding: 0.5rem 1rem;
 }
 
-pre {
-  color: black;
-  background: #f0f0f0;
-  padding: 1rem;
-  overflow-x: auto;
+.response-container {
+  margin-top: 1rem;
+}
+
+.loading {
+  opacity: 0.7;
 }
 </style>
