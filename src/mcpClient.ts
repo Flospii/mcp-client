@@ -14,6 +14,8 @@ export async function createMcpClient(): Promise<Client> {
   // Create the transport instance.
   const transport = new SSEClientTransport(new URL(MCP_SERVER_ENDPOINT));
 
+  console.log("Connecting to MCP server at:", MCP_SERVER_ENDPOINT);
+
   // Set up message handling on the transport.
   transport.onmessage = (event) => {
     // The event may be a string or an already-parsed object.
