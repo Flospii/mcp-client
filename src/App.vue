@@ -66,27 +66,11 @@ export default defineComponent({
       }
 
       try {
-        // Instead of calling a tool like "echo", we send a sampling request to the LLM.
-        // The request method is "sampling/createMessage" and we provide the user's message in the params.
-        const result = await client.value.request({
-          method: "sampling/createMessage",
-          params: {
-            // A list of messages is used to build up context for the LLM.
-            messages: [
-              {
-                role: "user",
-                content: {
-                  type: "text",
-                  text: inputText.value
-                }
-              }
-            ],
-            // Maximum tokens to return (adjust as needed).
-            maxTokens: 256,
-            // Temperature controls the randomness; adjust according to your requirements.
-            temperature: 0.7,
-            // Optionally, you can add a systemPrompt or modelPreferences.
-          }
+        // For demonstration, we assume the MCP server has an "echo" tool.
+        // Adjust the tool name and parameters as needed.
+        const result = await client.value.callTool({
+          name: "echo",
+          arguments: { message: inputText.value }
         });
 
         // Process the returned result: We assume that the response contains a "content" array
@@ -97,9 +81,9 @@ export default defineComponent({
           .join("\n");
 
         responseText.value = textResult;
-      } catch (error: any) {
-        console.error("Error calling sampling/createMessage:", error);
-        responseText.value = "Error calling LLM.";
+      } catch (error) {
+        console.error("Error calling tool:", error);
+        responseText.value = "Error calling tool.";
       }
     };
 

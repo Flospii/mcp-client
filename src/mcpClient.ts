@@ -21,6 +21,8 @@ export async function createMcpClient(): Promise<Client> {
     // The event may be a string or an already-parsed object.
     const message = typeof event === "string" ? JSON.parse(event) : event;
 
+    console.log("Received message from server:", message);
+
     // Check if this is a sampling/createMessage request.
     if (message.method === "sampling/createMessage" && message.params) {
       console.log("Received createMessage request:", message.params);
