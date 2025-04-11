@@ -1,0 +1,13 @@
+{
+  "build": {
+    "dockerfile": "../Dockerfile"
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "esbenp.prettier-vscode", // Prettier for JS/TS/JSON/etc.
+        "vue.volar" // Vue 3 support
+      ]
+    }
+  }
+}
