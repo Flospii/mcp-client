@@ -38,9 +38,12 @@ export default defineComponent({
     // Initialize the MCP client on mount.
     onMounted(async () => {
       try {
+        console.log("Initializing MCP client...");
         client.value = await createMcpClient();
         // List available tools.
+        console.log("Client initialized:", client.value);
         const toolsResult = await client.value.listTools();
+        console.log("Available tools:", toolsResult.tools);
         tools.value = toolsResult.tools.map((tool: any) => tool.name);
       } catch (error) {
         console.error("Error initializing MCP client:", error);
@@ -56,27 +59,47 @@ export default defineComponent({
 
     // Handle form submission.
     const submitQuery = async () => {
-
       console.log("Submitting query:", inputText.value);
 
       if (!client.value || inputText.value.trim() === "") {
         return;
       }
+
       try {
-        // For demonstration, we assume the MCP server has an "echo" tool.
-        // Adjust the tool name and parameters as needed.
-        const result = await client.value.callTool({
-          name: "echo",
-          arguments: { message: inputText.value }
+        // Instead of calling a tool like "echo", we send a sampling request to the LLM.
+        // The request method is "sampling/createMessage" and we provide the user's message in the params.
+        const result = await client.value.request({
+          method: "sampling/createMessage",
+          params: {
+            // A list of messages is used to build up context for the LLM.
+            messages: [
+              {
+                role: "user",
+                content: {
+                  type: "text",
+                  text: inputText.value
+                }
+              }
+            ],
+            // Maximum tokens to return (adjust as needed).
+            maxTokens: 256,
+            // Temperature controls the randomness; adjust according to your requirements.
+            temperature: 0.7,
+            // Optionally, you can add a systemPrompt or modelPreferences.
+          }
         });
+
+        // Process the returned result: We assume that the response contains a "content" array
+        // with one or more parts having type "text".
         const textResult = result.content
           .filter((item: any) => item.type === "text")
           .map((item: any) => item.text)
           .join("\n");
+
         responseText.value = textResult;
-      } catch (error) {
-        console.error("Error calling tool:", error);
-        responseText.value = "Error calling tool.";
+      } catch (error: any) {
+        console.error("Error calling sampling/createMessage:", error);
+        responseText.value = "Error calling LLM.";
       }
     };
 
@@ -114,6 +137,7 @@ button {
 }
 
 pre {
+  color: black;
   background: #f0f0f0;
   padding: 1rem;
   overflow-x: auto;

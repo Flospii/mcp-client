@@ -23,6 +23,7 @@ export async function createMcpClient(): Promise<Client> {
 
     // Check if this is a sampling/createMessage request.
     if (message.method === "sampling/createMessage" && message.params) {
+      console.log("Received createMessage request:", message.params);
       // Process the request with the custom sampling handler.
       ollamaSamplingHandler(message.params as CreateMessageRequest)
         .then((result) => {
@@ -59,6 +60,8 @@ export async function createMcpClient(): Promise<Client> {
       },
     },
   });
+
+  console.log("MCP client created with capabilities:", client);
 
   // Connect the MCP client using the custom HTTP SSE transport.
   // Note: client.connect() automatically calls transport.start() internally.
