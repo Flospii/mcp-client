@@ -1,9 +1,6 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
-import type {
-  Tool,
-  CreateMessageRequest,
-} from "@modelcontextprotocol/sdk/types.js";
+import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { LLMClient, type MessageParam, type LLMResponse } from "./myLLM";
 
 const MCP_SERVER_ENDPOINT = "http://localhost:3001/mcp";
@@ -16,7 +13,6 @@ export class MCPClient {
   private conversationHistory: MessageParam[] = [];
 
   constructor() {
-    // Advertise the sampling capability so that the server knows that the client supports LLM sampling.
     this.mcp = new Client({
       name: "vue-mcp-client",
       version: "1.0.0",
@@ -31,8 +27,8 @@ export class MCPClient {
 
   // Connect to the MCP server and fetch available tools.
   public async connectToServer(): Promise<void> {
-    // Note: client.connect() automatically calls transport.start() internally.
     await this.mcp.connect(this.transport);
+    // Fetch the list of tools from the MCP server
     const toolsResult = await this.mcp.listTools();
     this.tools = toolsResult.tools.map((tool) => ({
       name: tool.name,
@@ -121,8 +117,6 @@ export class MCPClient {
     // Format: TOOL_CALL:toolName:toolArguments
     const toolCallRegex = /TOOL_CALL:([a-zA-Z0-9_-]+):({.*})/;
 
-    console.log("Tool call regex:", toolCallRegex);
-
     const match = finalResponse.match(toolCallRegex);
 
     console.log("Tool call match:", match);
@@ -140,17 +134,6 @@ export class MCPClient {
       console.log(`LLM requested tool call: ${toolName} with args:`, toolArgs);
 
       try {
-        // Add the assistant's tool call message to the conversation
-        this.conversationHistory.push({
-          role: "assistant",
-          content: {
-            type: "text",
-            text: `I need to check ${toolName} with these parameters: ${JSON.stringify(
-              toolArgs
-            )}`,
-          },
-        });
-
         // Call the tool via MCP
         const toolResult = await this.mcp.callTool({
           name: toolName,

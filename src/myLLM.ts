@@ -28,13 +28,6 @@ export class LLMClient {
       prompt += `${msg.role}: ${msg.content.text}\n`;
     }
 
-    // Add instructions for tool usage if tools are available
-    if (options.toolsPrompt) {
-      prompt +=
-        '\nIf you need to use a tool, respond with TOOL_CALL:toolName:{"param":"value"}\n';
-      prompt += "Otherwise, just provide a helpful response.\n";
-    }
-
     console.log("LLM prompt:", prompt);
 
     try {
@@ -59,7 +52,6 @@ export class LLMClient {
       }
 
       const data = await response.json();
-      console.log("LLM response data:", data);
 
       return {
         id: "llm_" + Date.now(),
