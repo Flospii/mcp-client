@@ -28,17 +28,15 @@ export class LLMClient {
       prompt += `${msg.role}: ${msg.content.text}\n`;
     }
 
-    console.log("LLM prompt:", prompt);
-
     try {
-      const response = await fetch("http://127.0.0.1:11434/api/generate", {
+      const response = await fetch(import.meta.env.VITE_LLM_SERVER_ENDPOINT, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
           prompt: prompt,
-          model: "llama3.1:8b", // Adjust if necessary
+          model: import.meta.env.VITE_LLM_MODEL, // Adjust if necessary
           stream: false,
           max_tokens: options.maxTokens || 1000,
         }),

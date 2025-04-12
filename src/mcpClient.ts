@@ -3,8 +3,6 @@ import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { LLMClient, type MessageParam, type LLMResponse } from "./myLLM";
 
-const MCP_SERVER_ENDPOINT = "http://localhost:3001/mcp";
-
 export class MCPClient {
   private mcp: Client;
   private transport: SSEClientTransport;
@@ -20,7 +18,9 @@ export class MCPClient {
         sampling: {},
       },
     });
-    this.transport = new SSEClientTransport(new URL(MCP_SERVER_ENDPOINT));
+    this.transport = new SSEClientTransport(
+      new URL(import.meta.env.VITE_MCP_SERVER_ENDPOINT)
+    );
     this.llm = new LLMClient();
     this.tools = [];
   }
@@ -106,12 +106,8 @@ export class MCPClient {
       }
     );
 
-    console.log("LLM raw response:", llmResponse);
-
     // Parse the response for tool calls
     let finalResponse = llmResponse.content;
-
-    console.log("LLM final response:", finalResponse);
 
     // Check for tool calls in the response
     // Format: TOOL_CALL:toolName:toolArguments
