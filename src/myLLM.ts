@@ -1,6 +1,7 @@
 // src/myLLM.ts
 export interface LLMOptions {
   maxTokens?: number;
+  toolsPrompt?: string;
 }
 
 export interface LLMResponse {
@@ -19,28 +20,34 @@ export class LLMClient {
     messages: MessageParam[],
     options: LLMOptions = {}
   ): Promise<LLMResponse> {
-    // Build a prompt by joining each message as "role: text"
-    const prompt = messages
-      .map((msg) => `${msg.role}: ${msg.content.text}`)
-      .join("\n");
+    // Build a prompt that includes both the tools info and conversation
+    let prompt = options.toolsPrompt || "";
+
+    // Add conversation messages
+    for (const msg of messages) {
+      prompt += `${msg.role}: ${msg.content.text}\n`;
+    }
+
+    // Add instructions for tool usage if tools are available
+    if (options.toolsPrompt) {
+      prompt +=
+        '\nIf you need to use a tool, respond with TOOL_CALL:toolName:{"param":"value"}\n';
+      prompt += "Otherwise, just provide a helpful response.\n";
+    }
+
     console.log("LLM prompt:", prompt);
 
-    // This depends on where you execute the web ui, it should be handled in the server side
-    const LLM_ENDPOINT = "http://127.0.0.1:11434/api/generate";
-
-    console.log("Sending request to LLM:", LLM_ENDPOINT);
-
     try {
-      const response = await fetch(LLM_ENDPOINT, {
+      const response = await fetch("http://127.0.0.1:11434/api/generate", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
           prompt: prompt,
-          model: "llama3.1:8b",
+          model: "llama3.1:8b", // Adjust if necessary
           stream: false,
-          max_tokens: options.maxTokens || 100,
+          max_tokens: options.maxTokens || 1000,
         }),
       });
 

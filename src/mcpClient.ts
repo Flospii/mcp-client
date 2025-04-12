@@ -1,7 +1,9 @@
-// src/mcpClient.ts
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
-import type { Tool } from "@modelcontextprotocol/sdk/types.js";
+import type {
+  Tool,
+  CreateMessageRequest,
+} from "@modelcontextprotocol/sdk/types.js";
 import { LLMClient, type MessageParam, type LLMResponse } from "./myLLM";
 
 const MCP_SERVER_ENDPOINT = "http://localhost:3001/mcp";
@@ -11,6 +13,7 @@ export class MCPClient {
   private transport: SSEClientTransport;
   private llm: LLMClient;
   private tools: Tool[];
+  private conversationHistory: MessageParam[] = [];
 
   constructor() {
     // Advertise the sampling capability so that the server knows that the client supports LLM sampling.
@@ -54,65 +57,181 @@ export class MCPClient {
     return this.mcp;
   }
 
-  // Process the user query by sending a sampling/createMessage request to the LLM.
-  public async processQuery(query: string): Promise<string> {
-    // Build the initial conversation with the user's query.
-    let messages: MessageParam[] = [
-      { role: "user", content: { type: "text", text: query } },
-    ];
+  // Get the current conversation history
+  getConversationHistory(): MessageParam[] {
+    return [...this.conversationHistory];
+  }
 
-    // Call the LLM.
-    const llmResponse: LLMResponse = await this.llm.sendMessage(messages, {
-      maxTokens: 100,
+  // Clear the conversation history
+  clearConversation(): void {
+    this.conversationHistory = [];
+  }
+
+  // Process the user query by sending a request to the LLM and handling tool calls
+  public async processQuery(query: string): Promise<string> {
+    // Add the user message to the conversation history
+    this.conversationHistory.push({
+      role: "user",
+      content: { type: "text", text: query },
     });
+
+    // Create a prompt that includes the tools available
+    let toolsPrompt = "";
+    if (this.tools.length > 0) {
+      toolsPrompt = "\nAvailable tools:\n";
+      for (const tool of this.tools) {
+        toolsPrompt += `- ${tool.name}: ${
+          tool.description || "No description"
+        }\n`;
+        if (tool.inputSchema) {
+          toolsPrompt += `  Input schema: ${JSON.stringify(
+            tool.inputSchema
+          )}\n`;
+        }
+      }
+      toolsPrompt +=
+        "\nTo use a tool, respond with: TOOL_CALL:toolName:toolArguments (as JSON)\n";
+    }
+
+    // Build the conversation history with the tools prompt
+    let fullPrompt = toolsPrompt + "\n";
+
+    // Add conversation history to the prompt
+    for (const msg of this.conversationHistory) {
+      fullPrompt += `${msg.role}: ${msg.content.text}\n`;
+    }
+
+    // Call the LLM with the conversation history and tools info
+    const llmResponse: LLMResponse = await this.llm.sendMessage(
+      this.conversationHistory,
+      {
+        maxTokens: 1000,
+        toolsPrompt: toolsPrompt, // Pass tools info to LLM client
+      }
+    );
+
     console.log("LLM raw response:", llmResponse);
 
-    // For demonstration: if the response starts with a tool call marker,
-    // e.g., "CALL_TOOL:echo:{...}", then execute the tool via MCP.
-    const toolCallPrefix = "CALL_TOOL:";
+    // Parse the response for tool calls
     let finalResponse = llmResponse.content;
-    if (finalResponse.startsWith(toolCallPrefix)) {
-      const splitIndex = finalResponse.indexOf(":", toolCallPrefix.length);
-      if (splitIndex !== -1) {
-        const toolName = finalResponse.substring(
-          toolCallPrefix.length,
-          splitIndex
-        );
-        const toolArgsStr = finalResponse.substring(splitIndex + 1);
-        let toolArgs = {};
-        try {
-          toolArgs = JSON.parse(toolArgsStr);
-        } catch (e) {
-          console.error("Error parsing tool arguments:", e);
-        }
-        console.log(
-          `LLM requested tool call: ${toolName} with args:`,
-          toolArgs
-        );
-        // Call the tool via MCP.
+
+    console.log("LLM final response:", finalResponse);
+
+    // Check for tool calls in the response
+    // Format: TOOL_CALL:toolName:toolArguments
+    const toolCallRegex = /TOOL_CALL:([a-zA-Z0-9_-]+):({.*})/;
+
+    console.log("Tool call regex:", toolCallRegex);
+
+    const match = finalResponse.match(toolCallRegex);
+
+    console.log("Tool call match:", match);
+
+    if (match) {
+      const toolName = match[1];
+      let toolArgs = {};
+
+      try {
+        toolArgs = JSON.parse(match[2]);
+      } catch (e) {
+        console.error("Error parsing tool arguments:", e);
+      }
+
+      console.log(`LLM requested tool call: ${toolName} with args:`, toolArgs);
+
+      try {
+        // Add the assistant's tool call message to the conversation
+        this.conversationHistory.push({
+          role: "assistant",
+          content: {
+            type: "text",
+            text: `I need to check ${toolName} with these parameters: ${JSON.stringify(
+              toolArgs
+            )}`,
+          },
+        });
+
+        // Call the tool via MCP
         const toolResult = await this.mcp.callTool({
           name: toolName,
           arguments: toolArgs,
         });
-        // Append the tool result to the conversation.
-        messages.push({
-          role: "assistant",
-          content: { type: "text", text: llmResponse.content },
+
+        console.log("Tool call successful. Result:", toolResult);
+
+        // Add the tool result to the conversation
+        const toolResultText = (toolResult.content as { text: string }[])[0]
+          .text;
+        this.conversationHistory.push({
+          role: "tool",
+          content: { type: "text", text: toolResultText },
         });
-        messages.push({
-          role: "user",
-          content: {
-            type: "text",
-            text: (toolResult.content as { text: string }[])[0].text,
-          },
+
+        // Get a follow-up response from the LLM with the tool result
+        // Create a specific prompt for the follow-up
+        const followUpPrompt = `You previously called the tool ${toolName} with arguments ${JSON.stringify(
+          toolArgs
+        )}. 
+The tool returned this result: ${toolResultText}
+Please provide a helpful response to the user based on this information.`;
+
+        const followUpMessages: MessageParam[] = [
+          ...this.conversationHistory,
+          { role: "system", content: { type: "text", text: followUpPrompt } },
+        ];
+
+        const followUpResponse = await this.llm.sendMessage(followUpMessages, {
+          maxTokens: 1000,
         });
-        const followUpResponse = await this.llm.sendMessage(messages, {
-          maxTokens: 100,
-        });
+
+        // Update the final response to be the follow-up response
         finalResponse = followUpResponse.content;
+      } catch (error) {
+        console.error(`Failed to call tool ${toolName}:`, error);
+        finalResponse = `Error calling tool "${toolName}": ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`;
       }
     }
 
+    // Add the final assistant response to the conversation history
+    this.conversationHistory.push({
+      role: "assistant",
+      content: { type: "text", text: finalResponse },
+    });
+
     return finalResponse;
+  }
+
+  // Test the connection to both MCP server and LLM
+  public async testConnection(): Promise<boolean> {
+    try {
+      // Test MCP connection
+      const toolsResult = await this.mcp.listTools();
+      console.log(
+        "MCP connection test:",
+        toolsResult.tools.length > 0 ? "Success" : "No tools found"
+      );
+
+      // Test LLM connection
+      const testResponse = await this.llm.sendMessage(
+        [
+          {
+            role: "user",
+            content: { type: "text", text: "Simple test: say 'Hello'" },
+          },
+        ],
+        { maxTokens: 10 }
+      );
+      console.log(
+        "LLM connection test:",
+        testResponse.content ? "Success" : "Failed"
+      );
+
+      return true;
+    } catch (error) {
+      console.error("Connection test failed:", error);
+      return false;
+    }
   }
 }
