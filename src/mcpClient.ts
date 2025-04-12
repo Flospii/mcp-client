@@ -1,10 +1,7 @@
 // src/mcpClient.ts
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
-import type {
-  Tool,
-  CreateMessageRequest,
-} from "@modelcontextprotocol/sdk/types.js";
+import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { LLMClient, type MessageParam, type LLMResponse } from "./myLLM";
 
 const MCP_SERVER_ENDPOINT = "http://localhost:3001/mcp";

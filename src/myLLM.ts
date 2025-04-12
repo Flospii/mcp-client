@@ -25,44 +25,43 @@ export class LLMClient {
       .join("\n");
     console.log("LLM prompt:", prompt);
 
-    console.log(
-      "Sending request to LLM...",
-      JSON.stringify({
-        prompt,
-        model: "llama3.1:8b", // Adjust if necessary.
-        stream: false,
-      })
-    );
+    // This depends on where you execute the web ui, it should be handled in the server side
+    const LLM_ENDPOINT = "http://127.0.0.1:11434/api/generate";
 
-    const response = await fetch(
-      "http://host.docker.internal:11434/api/generate",
-      {
+    console.log("Sending request to LLM:", LLM_ENDPOINT);
+
+    try {
+      const response = await fetch(LLM_ENDPOINT, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          prompt,
-          model: "llama3.1:8b", // Adjust if necessary.
+          prompt: prompt,
+          model: "llama3.1:8b",
           stream: false,
+          max_tokens: options.maxTokens || 100,
         }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(
+          `LLM request failed with status ${response.status}: ${errorText}`
+        );
       }
-    );
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(
-        `LLM request failed with status ${response.status}: ${errorText}`
-      );
+      const data = await response.json();
+      console.log("LLM response data:", data);
+
+      return {
+        id: "llm_" + Date.now(),
+        role: "assistant",
+        content: data.response || data.text || "",
+      };
+    } catch (error) {
+      console.error("Error sending request to LLM:", error);
+      throw error;
     }
-
-    const data = await response.json();
-    console.log("LLM response data:", data);
-
-    return {
-      id: "llm_" + Date.now(),
-      role: "assistant",
-      content: data.text || "",
-    };
   }
 }
