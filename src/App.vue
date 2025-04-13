@@ -24,36 +24,36 @@
 </template>
 
 <script lang="ts">
-import { MCPClient } from "./mcpClient";
-import type { MessageParam } from "./myLLM";
+import { MCPHost } from "./mcpHost";
+import type { MessageParam } from "./llmClient";
+import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 
 export default {
   name: "App",
   data() {
     return {
-      mcpClient: null as MCPClient | null,
-      tools: [] as Array<{ name: string; description?: string; inputSchema?: unknown }>,
+      mcpHost: new MCPHost(),
+      tools: [] as Tool[],
       inputText: "",
       isLoading: false,
       chatHistory: [] as MessageParam[],
     };
   },
   methods: {
-    async initializeClient() {
+    async initializeMCPHost() {
       try {
-        console.log("Initializing MCP client...");
-        const client = new MCPClient();
-        await client.connectToServer();
-        this.mcpClient = client;
-        this.tools = client.getTools();
-        console.log("MCP client initialized with tools:", this.tools.map((tool) => tool.name));
+        await this.mcpHost.initializeMCPClient(import.meta.env.VITE_MCP_SERVER_ENDPOINT);
+        console.log("MCP Client initialized successfully.");
+        this.tools = this.mcpHost.getAllTools();
+        console.log("MCP Host initialized with tools:", this.tools);
+        this.mcpHost.startNewChat();
       } catch (error) {
         console.error("Error initializing MCP client:", error);
       }
     },
     async submitQuery() {
       console.log("Submitting query:", this.inputText);
-      if (!this.mcpClient || this.inputText.trim() === "") {
+      if (!this.mcpHost || this.inputText.trim() === "") {
         return;
       }
 
@@ -66,7 +66,7 @@ export default {
       });
 
       try {
-        const result = await this.mcpClient.processQuery(this.inputText);
+        const result = await this.mcpHost.processQuery("1", this.inputText);
 
         // Add the assistant's response to the chat history
         this.chatHistory.push({
@@ -93,7 +93,7 @@ export default {
     },
   },
   mounted() {
-    this.initializeClient();
+    this.initializeMCPHost();
   },
   beforeUnmount() {
     this.cleanupClient();

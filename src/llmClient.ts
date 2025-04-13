@@ -50,6 +50,8 @@ export class LLMClient {
       }
 
       const data = await response.json();
+      console.log("LLM Prompt:", prompt);
+      console.log("LLM response:", data);
 
       return {
         id: "llm_" + Date.now(),
