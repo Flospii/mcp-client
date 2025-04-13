@@ -53,13 +53,13 @@ export class MCPHost {
     query: string
   ): Promise<string> {
     // Find the conversation by ID to get the conversation history
-    const chat = this.getConversationById(conversationId);
-    if (!chat) {
+    const conversation = this.getConversationById(conversationId);
+    if (!conversation) {
       throw new Error(`Conversation with ID ${conversationId} not found.`);
     }
 
     // Add the user message to the conversation history
-    chat.conversationHistory.push({
+    conversation.conversationHistory.push({
       role: "user",
       content: { type: "text", text: query },
     });
@@ -76,7 +76,11 @@ export class MCPHost {
           }\n`;
           if (tool.inputSchema) {
             toolsPrompt += `  Input schema: ${JSON.stringify(
-              tool.inputSchema
+              tool.inputSchema,
+              (key, value) =>
+                ["$schema", "additionalProperties"].includes(key)
+                  ? undefined
+                  : value
             )}\n`;
           }
         }
@@ -86,9 +90,12 @@ export class MCPHost {
     }
 
     // Send the query to the LLM
-    const response = await this.llm.sendMessage(chat.conversationHistory, {
-      toolsPrompt,
-    });
+    const response = await this.llm.sendMessage(
+      conversation.conversationHistory,
+      {
+        toolsPrompt,
+      }
+    );
 
     if (!response) {
       throw new Error("LLM response is empty.");
@@ -98,9 +105,12 @@ export class MCPHost {
     const toolCallMatch = this.isToolCallInQuery(response.content);
     if (toolCallMatch) {
       // If a tool call is detected, process it
-      const processedResponse = this.processToolCall(chat, response.content);
+      const processedResponse = this.processToolCall(
+        conversation,
+        response.content
+      );
       // Add the LLM response to the conversation history
-      chat.conversationHistory.push({
+      conversation.conversationHistory.push({
         role: "assistant",
         content: { type: "text", text: response.content },
       });
@@ -109,7 +119,7 @@ export class MCPHost {
     } else {
       // No tool call detected, just return the LLM response
       // Add the LLM response to the conversation history
-      chat.conversationHistory.push({
+      conversation.conversationHistory.push({
         role: "assistant",
         content: { type: "text", text: response.content },
       });
@@ -129,21 +139,14 @@ export class MCPHost {
   ): { name: string; args: object }[] {
     // Extract all tool calls from the query
     const toolCalls: { name: string; args: object }[] = [];
-    const regex = new RegExp(toolCallRegex);
     let match;
-    let remainingQuery = query;
-
-    while ((match = regex.exec(remainingQuery)) !== null) {
+    // TODO: Sometimes the llm gives just for example "get-weather:{"city":"Linz"}" back. No TOOL_CALL: prefix.
+    while ((match = toolCallRegex.exec(query)) !== null) {
       const toolName = match[1];
-      try {
-        const toolArgs = JSON.parse(match[2]);
-        toolCalls.push({ name: toolName, args: toolArgs });
-      } catch (error) {
-        console.error(`Error parsing tool arguments for ${toolName}:`, error);
-        // Continue with next match instead of failing
-      }
+      const toolArgs = JSON.parse(match[2]);
+      toolCalls.push({ name: toolName, args: toolArgs });
       // Remove the matched part to avoid infinite loops
-      remainingQuery = remainingQuery.slice(match.index + match[0].length);
+      query = query.slice(match.index + match[0].length);
     }
     return toolCalls;
   }
@@ -179,7 +182,7 @@ export class MCPHost {
           .text;
         const followUpPrompt = `You previously called the tool ${toolName} with arguments ${JSON.stringify(
           toolArgs
-        )}. The tool returned this result: ${toolResultText}. Please provide a helpful response to the user based on this information.`;
+        )}. The tool returned this result: ${toolResultText}. Please provide a helpful response to the user based on this information in users language.`;
 
         // Add the follow-up prompt to the conversation history
         conversation.conversationHistory.push({
