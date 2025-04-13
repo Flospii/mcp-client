@@ -129,13 +129,21 @@ export class MCPHost {
   ): { name: string; args: object }[] {
     // Extract all tool calls from the query
     const toolCalls: { name: string; args: object }[] = [];
+    const regex = new RegExp(toolCallRegex);
     let match;
-    while ((match = toolCallRegex.exec(query)) !== null) {
+    let remainingQuery = query;
+
+    while ((match = regex.exec(remainingQuery)) !== null) {
       const toolName = match[1];
-      const toolArgs = JSON.parse(match[2]);
-      toolCalls.push({ name: toolName, args: toolArgs });
+      try {
+        const toolArgs = JSON.parse(match[2]);
+        toolCalls.push({ name: toolName, args: toolArgs });
+      } catch (error) {
+        console.error(`Error parsing tool arguments for ${toolName}:`, error);
+        // Continue with next match instead of failing
+      }
       // Remove the matched part to avoid infinite loops
-      query = query.slice(match.index + match[0].length);
+      remainingQuery = remainingQuery.slice(match.index + match[0].length);
     }
     return toolCalls;
   }
