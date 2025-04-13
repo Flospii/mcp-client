@@ -76,11 +76,7 @@ export class MCPHost {
           }\n`;
           if (tool.inputSchema) {
             toolsPrompt += `  Input schema: ${JSON.stringify(
-              tool.inputSchema,
-              (key, value) =>
-                ["$schema", "additionalProperties"].includes(key)
-                  ? undefined
-                  : value
+              tool.inputSchema
             )}\n`;
           }
         }
