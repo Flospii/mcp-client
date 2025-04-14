@@ -101,14 +101,14 @@ export class MCPHost {
     const toolCallMatch = this.isToolCallInQuery(response.content);
     if (toolCallMatch) {
       // If a tool call is detected, process it
-      const processedResponse = this.processToolCall(
+      const processedResponse = await this.processToolCall(
         conversation,
         response.content
       );
       // Add the LLM response to the conversation history
       conversation.conversationHistory.push({
         role: "assistant",
-        content: { type: "text", text: response.content },
+        content: { type: "text", text: processedResponse },
       });
       // Return the processed response
       return processedResponse;
@@ -198,7 +198,6 @@ export class MCPHost {
     if (!response) {
       throw new Error("LLM response is empty.");
     }
-
     // Check if the response contains a tool call
     const toolCallMatch = this.isToolCallInQuery(response.content);
     if (toolCallMatch) {
