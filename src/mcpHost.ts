@@ -81,8 +81,27 @@ export class MCPHost {
           }
         }
       }
-      toolsPrompt +=
-        "\nTo use a tool, respond with: TOOL_CALL:toolName:toolArguments (as JSON)\n";
+      toolsPrompt += `
+You have access to tools that can help with certain tasks. 
+ONLY use a tool if it is strictly necessary to answer the user's request.
+If you use a tool, respond with exactly this format (and nothing else):
+
+TOOL_CALL:toolName:{"argument1":"value", ...}
+
+✅ Examples (correct):
+TOOL_CALL:get-weather:{"city":"Berlin"}
+TOOL_CALL:get-sensor-data:{"deviceId":"A-101"}
+      
+❌ Wrong:
+get-weather:{"city":"Berlin"}
+"The tool get-weather returns..."
+"I will now call get-weather..."
+
+Do NOT explain the tool call. Do NOT add any text before or after.
+Do NOT mention any tools if you don't need one.
+You can use multiple tools in one response, just separate them with a comma.
+
+If the user's question can be answered directly, just answer normally.`;
     }
 
     // Send the query to the LLM
@@ -133,17 +152,26 @@ export class MCPHost {
   private getToolCallsFromQuery(
     query: string
   ): { name: string; args: object }[] {
-    // Extract all tool calls from the query
     const toolCalls: { name: string; args: object }[] = [];
-    let match;
-    // TODO: Sometimes the llm gives just for example "get-weather:{"city":"Linz"}" back. No TOOL_CALL: prefix.
-    while ((match = toolCallRegex.exec(query)) !== null) {
-      const toolName = match[1];
-      const toolArgs = JSON.parse(match[2]);
-      toolCalls.push({ name: toolName, args: toolArgs });
-      // Remove the matched part to avoid infinite loops
-      query = query.slice(match.index + match[0].length);
+
+    // Split multiple tool calls by comma, but only at top level
+    const parts = query.split(/TOOL_CALL:/).filter(Boolean); // Remove empty parts before first TOOL_CALL:
+
+    for (const part of parts) {
+      const colonIndex = part.indexOf(":");
+      if (colonIndex === -1) continue;
+
+      const toolName = part.slice(0, colonIndex).trim();
+      const argsString = part.slice(colonIndex + 1).trim();
+
+      try {
+        const args = JSON.parse(argsString);
+        toolCalls.push({ name: toolName, args });
+      } catch (err) {
+        console.warn(`❌ Failed to parse tool args for ${toolName}:`, err);
+      }
     }
+
     return toolCalls;
   }
 
