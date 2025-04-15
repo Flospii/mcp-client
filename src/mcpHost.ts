@@ -1,14 +1,13 @@
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
-import { LLMClient, type MessageParam } from "./llmClient";
+import { LLMClient } from "./llmClient";
 import { MCPClient } from "./mcpClient";
+import { type Message, type ToolCall } from "ollama";
 
 export interface Conversation {
   id: string;
   createdAt: number;
-  conversationHistory: MessageParam[];
+  conversationHistory: Message[];
 }
-
-const toolCallRegex = /TOOL_CALL:([a-zA-Z0-9_-]+):({.*})/;
 
 export class MCPHost {
   private mcpClients: MCPClient[];
@@ -18,7 +17,10 @@ export class MCPHost {
   constructor() {
     this.mcpClients = [];
     this.conversations = [];
-    this.llm = new LLMClient();
+    this.llm = new LLMClient(
+      import.meta.env.VITE_LLM_SERVER_ENDPOINT,
+      "llama3.1:latest"
+    );
   }
 
   async initializeMCPClient(serverEndpoint: string): Promise<void> {
@@ -36,7 +38,16 @@ export class MCPHost {
     const newChat: Conversation = {
       id: (this.conversations.length + 1).toString(),
       createdAt: Date.now(),
-      conversationHistory: [],
+      conversationHistory: [
+        {
+          role: "system",
+          content: `You are a helpful assistant.
+  
+  You may use tools if and only if it is absolutely necessary to answer the user's question.
+  
+  Always respond in the user's language.`,
+        },
+      ],
     };
     this.conversations.push(newChat);
     return newChat;
@@ -61,55 +72,13 @@ export class MCPHost {
     // Add the user message to the conversation history
     conversation.conversationHistory.push({
       role: "user",
-      content: { type: "text", text: query },
+      content: query,
     });
-
-    // Create a prompt that includes the tools available from all MCP clients
-    let toolsPrompt = "";
-    for (const mcpClient of this.mcpClients) {
-      const tools = mcpClient.getTools();
-      if (tools.length > 0) {
-        toolsPrompt = "\nAvailable tools:\n";
-        for (const tool of tools) {
-          toolsPrompt += `- ${tool.name}: ${
-            tool.description || "No description"
-          }\n`;
-          if (tool.inputSchema) {
-            toolsPrompt += `  Input schema: ${JSON.stringify(
-              tool.inputSchema
-            )}\n`;
-          }
-        }
-      }
-      toolsPrompt += `
-You have access to tools that can help with certain tasks. 
-ONLY use a tool if it is strictly necessary to answer the user's request.
-If you use a tool, respond with exactly this format (and nothing else):
-
-TOOL_CALL:toolName:{"argument1":"value", ...}
-
-✅ Examples (correct):
-TOOL_CALL:get-weather:{"city":"Berlin"}
-TOOL_CALL:get-sensor-data:{"deviceId":"A-101"}
-      
-❌ Wrong:
-get-weather:{"city":"Berlin"}
-"The tool get-weather returns..."
-"I will now call get-weather..."
-
-Do NOT explain the tool call. Do NOT add any text before or after.
-Do NOT mention any tools if you don't need one.
-You can use multiple tools in one response, just separate them with a comma.
-
-If the user's question can be answered directly, just answer normally.`;
-    }
 
     // Send the query to the LLM
     const response = await this.llm.sendMessage(
       conversation.conversationHistory,
-      {
-        toolsPrompt,
-      }
+      this.getAllTools()
     );
 
     if (!response) {
@@ -117,17 +86,16 @@ If the user's question can be answered directly, just answer normally.`;
     }
 
     // Check if the response contains a tool call
-    const toolCallMatch = this.isToolCallInQuery(response.content);
-    if (toolCallMatch) {
+    if (response.toolCalls) {
       // If a tool call is detected, process it
       const processedResponse = await this.processToolCall(
         conversation,
-        response.content
+        response.toolCalls
       );
       // Add the LLM response to the conversation history
       conversation.conversationHistory.push({
         role: "assistant",
-        content: { type: "text", text: processedResponse },
+        content: processedResponse,
       });
       // Return the processed response
       return processedResponse;
@@ -136,7 +104,7 @@ If the user's question can be answered directly, just answer normally.`;
       // Add the LLM response to the conversation history
       conversation.conversationHistory.push({
         role: "assistant",
-        content: { type: "text", text: response.content },
+        content: response.content,
       });
       // Return the LLM response
 
@@ -144,77 +112,34 @@ If the user's question can be answered directly, just answer normally.`;
     }
   }
 
-  private isToolCallInQuery(query: string): boolean {
-    // Check if the query contains a tool call
-    return toolCallRegex.test(query);
-  }
-
-  private getToolCallsFromQuery(
-    query: string
-  ): { name: string; args: object }[] {
-    const toolCalls: { name: string; args: object }[] = [];
-
-    // Split multiple tool calls by comma, but only at top level
-    const parts = query.split(/TOOL_CALL:/).filter(Boolean); // Remove empty parts before first TOOL_CALL:
-
-    for (const part of parts) {
-      const colonIndex = part.indexOf(":");
-      if (colonIndex === -1) continue;
-
-      const toolName = part.slice(0, colonIndex).trim();
-      const argsString = part.slice(colonIndex + 1).trim();
-
-      try {
-        const args = JSON.parse(argsString);
-        toolCalls.push({ name: toolName, args });
-      } catch (err) {
-        console.warn(`❌ Failed to parse tool args for ${toolName}:`, err);
-      }
-    }
-
-    return toolCalls;
-  }
-
   private async processToolCall(
     conversation: Conversation,
-    query: string
+    toolCalls: ToolCall[]
   ): Promise<string> {
-    // Extract the tool call from the query
-    const toolCalls = this.getToolCallsFromQuery(query);
-    if (!toolCalls) {
-      throw new Error("Invalid tool call in query.");
-    }
-    for (const { name: toolName, args: toolArgs } of toolCalls) {
+    for (const toolCall of toolCalls) {
       // Find the client that has the tool
       const client = this.mcpClients.find((c) =>
-        c.getTools().some((tool) => tool.name === toolName)
+        c.getTools().some((tool) => tool.name === toolCall.function.name)
       );
       if (client) {
-        // Call the tool with the arguments
+        // Convert Ollama ToolCall to MCP format
         const toolResponse = await client.getClient().callTool({
-          name: toolName,
-          arguments: toolArgs as { [x: string]: unknown },
+          name: toolCall.function.name,
+          arguments: toolCall.function.arguments,
         });
+        console.log(
+          `Tool response from ${toolCall.function.name}:`,
+          toolResponse
+        );
         // Add the tool response to the conversation history
         conversation.conversationHistory.push({
           role: "tool",
-          content: { type: "text", text: JSON.stringify(toolResponse) },
-        });
-
-        // Create a specific prompt for the follow-up
-        const toolResultText = (toolResponse.content as { text: string }[])[0]
-          .text;
-        const followUpPrompt = `You previously called the tool ${toolName} with arguments ${JSON.stringify(
-          toolArgs
-        )}. The tool returned this result: ${toolResultText}. Please provide a helpful response to the user based on this information in users language.`;
-
-        // Add the follow-up prompt to the conversation history
-        conversation.conversationHistory.push({
-          role: "system",
-          content: { type: "text", text: followUpPrompt },
+          content: JSON.stringify(toolResponse),
         });
       } else {
-        throw new Error(`Tool "${toolName}" not found in any MCP client.`);
+        throw new Error(
+          `Tool "${toolCall.function.name}" not found in any MCP client.`
+        );
       }
     }
 
@@ -226,15 +151,8 @@ If the user's question can be answered directly, just answer normally.`;
     if (!response) {
       throw new Error("LLM response is empty.");
     }
-    // Check if the response contains a tool call
-    const toolCallMatch = this.isToolCallInQuery(response.content);
-    if (toolCallMatch) {
-      // If a tool call is detected, process it
-      return this.processToolCall(conversation, response.content);
-    } else {
-      // No more tool calls, return the lfinal response
-      return response.content;
-    }
+
+    return response.content;
   }
 
   getMCPClients(): MCPClient[] {

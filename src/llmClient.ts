@@ -1,66 +1,107 @@
 // src/myLLM.ts
-export interface LLMOptions {
-  maxTokens?: number;
-  toolsPrompt?: string;
-}
+import {
+  type ChatRequest,
+  type Message,
+  Ollama,
+  type Tool,
+  type ToolCall,
+} from "ollama";
+import type { Tool as mcpTool } from "@modelcontextprotocol/sdk/types.js";
 
 export interface LLMResponse {
-  id: string;
   role: string;
   content: string;
-}
-
-export interface MessageParam {
-  role: "user" | "assistant" | "tool" | "system";
-  content: { type: "text"; text: string };
+  toolCalls?: ToolCall[];
 }
 
 export class LLMClient {
-  async sendMessage(
-    messages: MessageParam[],
-    options: LLMOptions = {}
-  ): Promise<LLMResponse> {
-    // Build a prompt that includes both the tools info and conversation
-    let prompt = options.toolsPrompt || "";
+  private ollama: Ollama;
+  private model: string;
 
-    // Add conversation messages
-    for (const msg of messages) {
-      prompt += `${msg.role}: ${msg.content.text}\n`;
-    }
+  constructor(llmServerEndpoint: string, model: string) {
+    this.ollama = new Ollama({
+      host: llmServerEndpoint,
+    });
+    this.model = model;
+  }
+
+  async sendMessage(
+    messages: Message[],
+    mcpTools?: mcpTool[]
+  ): Promise<LLMResponse> {
+    // Build ollama-compatible message format
+    const ollamaMessages: Message[] = messages.map((msg) => ({
+      role: msg.role,
+      content: msg.content,
+    }));
+
+    // Convert MCP tools to Ollama-compatible format
+    const tools: Tool[] = mcpTools
+      ? mcpTools.map(this.convertMCPToolToOllamaTool)
+      : [];
+
+    // Create Request
+    const request: ChatRequest = {
+      model: this.model,
+      messages: ollamaMessages,
+      stream: false,
+      ...(tools.length ? { tools } : {}),
+    };
+
+    console.log("Tools (converted):", tools);
+    console.log("Sending request to Ollama:", request);
 
     try {
-      const response = await fetch(import.meta.env.VITE_LLM_SERVER_ENDPOINT, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          prompt: prompt,
-          model: import.meta.env.VITE_LLM_MODEL, // Adjust if necessary
-          stream: false,
-          max_tokens: options.maxTokens || 1000,
-        }),
-      });
+      const response = await this.ollama.chat(
+        request as ChatRequest & { stream: false }
+      );
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(
-          `LLM request failed with status ${response.status}: ${errorText}`
-        );
-      }
-
-      const data = await response.json();
-      console.log("LLM Prompt:", prompt);
-      console.log("LLM response:", data);
+      console.log("Response from Ollama:", response);
 
       return {
-        id: "llm_" + Date.now(),
         role: "assistant",
-        content: data.response || data.text || "",
+        content: response.message.content,
+        toolCalls: response.message.tool_calls,
       };
     } catch (error) {
-      console.error("Error sending request to LLM:", error);
+      console.error("Error sending request to Ollama:", error);
       throw error;
     }
+  }
+
+  private convertMCPToolToOllamaTool(mcp: mcpTool): Tool {
+    const schema = mcp.inputSchema || { type: "object" };
+    console.log("convertMCPToolToOllamaTool", mcp);
+
+    const properties: Tool["function"]["parameters"]["properties"] = {};
+
+    for (const [key, value] of Object.entries(schema.properties || {})) {
+      const prop = value as {
+        type: string;
+        description?: string;
+        enum?: string[];
+      };
+
+      properties[key] = {
+        type: prop.type,
+        description: prop.description || "",
+        ...(prop.enum ? { enum: prop.enum } : {}),
+      };
+    }
+
+    const required = Array.isArray(schema.required) ? schema.required : [];
+
+    return {
+      type: "function",
+      function: {
+        name: mcp.name,
+        description: mcp.description || "No description",
+        parameters: {
+          type: "object",
+          required,
+          properties,
+        },
+      },
+    };
   }
 }
