@@ -3,6 +3,28 @@ import { LLMClient } from "./llmClient";
 import { MCPClient } from "./mcpClient";
 import { type Message, type ToolCall } from "ollama";
 
+// This is the system prompt that initializes the conversation
+// It should be in the same language as the user
+// and should provide context to the LLM.
+const systemPrompt =
+  "You are a helpful, precise and friendly assistant. " +
+  "You have access to various tools to obtain information and complete tasks. " +
+  "IMPORTANT RULES FOR TOOL USE:" +
+  "1. use tools whenever it makes sense to get current or specific information. " +
+  "2. read the tool description carefully to understand how to access it correctly. " +
+  "3. format tool calls exactly as required. " +
+  "4. if a tool call fails, do not retry with identical parameters. " +
+  " " +
+  " If you are unsure or need more context, politely ask the user for more information. " +
+  " " +
+  "Your answers should: " +
+  "- Be precise and factual " +
+  "- Be well structured and easy to understand " +
+  "- Be based on tool results and your knowledge " +
+  "- Do not contain false information (admit if you don't know something) " +
+  " " +
+  "Think step by step before answering. ";
+
 export interface Conversation {
   id: string;
   createdAt: number;
@@ -40,15 +62,14 @@ export class MCPHost {
       createdAt: Date.now(),
       conversationHistory: [
         {
+          // This is the system message that initializes the conversation
+          // and provides context to the LLM.
           role: "system",
-          content: `You are a helpful assistant.
-  
-  You may use tools if and only if it is absolutely necessary to answer the user's question.
-  
-  Always respond in the user's language.`,
+          content: systemPrompt,
         },
       ],
     };
+    console.log("New chat started:", newChat);
     this.conversations.push(newChat);
     return newChat;
   }
@@ -122,20 +143,34 @@ export class MCPHost {
         c.getTools().some((tool) => tool.name === toolCall.function.name)
       );
       if (client) {
-        // Convert Ollama ToolCall to MCP format
-        const toolResponse = await client.getClient().callTool({
-          name: toolCall.function.name,
-          arguments: toolCall.function.arguments,
-        });
-        console.log(
-          `Tool response from ${toolCall.function.name}:`,
-          toolResponse
-        );
-        // Add the tool response to the conversation history
-        conversation.conversationHistory.push({
-          role: "tool",
-          content: JSON.stringify(toolResponse),
-        });
+        try {
+          const toolResponse = await client.getClient().callTool({
+            name: toolCall.function.name,
+            arguments: toolCall.function.arguments,
+          });
+          console.log(
+            `Tool response from ${toolCall.function.name}:`,
+            toolResponse
+          );
+          // Add the tool response to the conversation history
+          conversation.conversationHistory.push({
+            role: "tool",
+            content: JSON.stringify(toolResponse),
+          });
+        } catch (error) {
+          console.error(`Error calling tool ${toolCall.function.name}:`, error);
+          // Füge Fehlermeldung zur Konversation hinzu
+          const errorMessage =
+            typeof error === "object" && error !== null && "message" in error
+              ? (error as Error).message
+              : String(error);
+          conversation.conversationHistory.push({
+            role: "tool",
+            content: JSON.stringify({
+              error: `Failed to call tool: ${errorMessage}`,
+            }),
+          });
+        }
       } else {
         throw new Error(
           `Tool "${toolCall.function.name}" not found in any MCP client.`

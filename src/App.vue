@@ -10,13 +10,22 @@
     </section>
     <section class="chat-container">
       <div class="messages">
-        <div v-for="(message, index) in chatHistory" :key="index" :class="['message', message.role]">
-          <strong>{{ message.role }}:</strong> {{ message.content.text }}
+        <div
+          v-for="(message, index) in chatHistory"
+          :key="index"
+          :class="['message', message.role]"
+        >
+          <strong>{{ message.role }}:</strong> {{ message.content }}
         </div>
       </div>
       <form @submit.prevent="submitQuery">
         <label for="queryInput">Enter message:</label>
-        <input id="queryInput" v-model="inputText" type="text" placeholder="Type your message here" />
+        <input
+          id="queryInput"
+          v-model="inputText"
+          type="text"
+          placeholder="Type your message here"
+        />
         <button type="submit">Send</button>
       </form>
     </section>
@@ -25,7 +34,7 @@
 
 <script lang="ts">
 import { MCPHost } from "./mcpHost";
-import type { MessageParam } from "./llmClient";
+import { type Message } from "ollama";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 
 export default {
@@ -36,20 +45,22 @@ export default {
       tools: [] as Tool[],
       inputText: "",
       isLoading: false,
-      chatHistory: [] as MessageParam[],
+      chatHistory: [] as Message[],
     };
   },
   methods: {
     async initializeMCPHost() {
       try {
-        await this.mcpHost.initializeMCPClient(import.meta.env.VITE_MCP_SERVER_ENDPOINT);
+        await this.mcpHost.initializeMCPClient(
+          import.meta.env.VITE_MCP_SERVER_ENDPOINT
+        );
         console.log("MCP Client initialized successfully.");
         this.tools = this.mcpHost.getAllTools();
         console.log("MCP Host initialized with tools:", this.tools);
-        this.mcpHost.startNewChat();
       } catch (error) {
         console.error("Error initializing MCP client:", error);
       }
+      this.mcpHost.startNewChat();
     },
     async submitQuery() {
       console.log("Submitting query:", this.inputText);
@@ -62,7 +73,7 @@ export default {
       // Add the user message to the chat history
       this.chatHistory.push({
         role: "user",
-        content: { type: "text", text: this.inputText }
+        content: this.inputText,
       });
 
       try {
@@ -71,7 +82,7 @@ export default {
         // Add the assistant's response to the chat history
         this.chatHistory.push({
           role: "assistant",
-          content: { type: "text", text: result }
+          content: result,
         });
       } catch (error) {
         console.error("Error processing query:", error);
@@ -79,18 +90,14 @@ export default {
         // Add error message to chat
         this.chatHistory.push({
           role: "assistant",
-          content: { type: "text", text: "Error processing query." }
+          content: "Error processing query.",
         });
       } finally {
         this.isLoading = false;
         this.inputText = ""; // Clear input field after sending
       }
     },
-    async cleanupClient() {
-      if (this.mcpClient) {
-        await this.mcpClient.close();
-      }
-    },
+    async cleanupClient() {},
   },
   mounted() {
     this.initializeMCPHost();
