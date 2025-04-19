@@ -19,7 +19,7 @@ export class MCPHost {
     this.conversations = [];
     this.llm = new LLMClient(
       import.meta.env.VITE_LLM_SERVER_ENDPOINT,
-      "llama3.1:latest"
+      import.meta.env.VITE_LLM_MODEL
     );
   }
 
